@@ -208,7 +208,7 @@ Grok Build also supports `XAI_API_KEY` for users who choose API authentication.
   OpenAI-compatible endpoint for its models; an Anthropic-compatible one gets a short message,
   because not every such endpoint lists models (Qwen's has no model list). For these agents
   SolidCraft runs the conversation itself, with the same tools, limits and questions as for a
-  coding agent, and at most 24 model requests per message.
+  coding agent, and no cap on model requests per message (Stop ends it).
 
 ## Signing in
 
@@ -298,9 +298,10 @@ saves, opens or inserts. A sweep's or pattern's `path` (curve ids) and an occurr
   everything that's waiting, and a question nobody answers is declined after four minutes. The
   [MCP server's folder limits](mcp.md) still apply after you allow: the design's folder, the
   recovery folder and the server's own scratch folder.
-- **A limit per message.** The agent may make 24 changes per message by default; you can set
-  the number on the AI page. Reading the design doesn't count. When it reaches the limit, it's
-  told to stop and report what's left; send another message to let it carry on.
+- **An optional limit per message.** There's none by default. Untick **Unlimited** on the AI
+  page to cap the changes the agent may make per message (it starts at 24). Reading the design
+  doesn't count. At the limit, it's told to stop and report what's left; send another message to
+  let it carry on. **Stop** always works.
 - **No crash reports,** whatever the permissions. Crash reports can hold other designs and file
   paths.
 - **Not the rest of the app.** It can't click the interface, change settings, quit, or drive the
