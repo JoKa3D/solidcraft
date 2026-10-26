@@ -15,7 +15,7 @@ use solidcraft_geom::Vec3;
 use solidcraft_render::{AnalysisMode, Camera, Rgb, SECTION_CAP, Scene};
 use wgpu::util::DeviceExt;
 
-use crate::view::{AccessMap, Frame, GpuScene, GpuTarget, Renderer, analysis_colors, analysis_uniform};
+use crate::view::{AccessMap, DrawStats, Frame, GpuScene, GpuTarget, Renderer, analysis_colors, analysis_uniform};
 use crate::{GpuError, Result, caught, error_scopes};
 
 /// The colour format pictures are drawn in: sRGB bytes as they are, like the viewport's usual
@@ -176,6 +176,17 @@ impl Capturer {
     /// [`Capturer::rgba`] with `highlight` drawn as the viewport draws its highlight scene
     /// (selection and hover feedback), over the model scene.
     pub fn rgba_highlighted(&self, scene: &Scene, highlight: Option<GpuScene>, cam: &Camera, width: u32, height: u32) -> Result<Vec<u8>> {
+        self.draw(scene, highlight, cam, width, height).map(|(rgba, _)| rgba)
+    }
+
+    /// [`Capturer::rgba`] and what the picture drew ([`DrawStats`]). Both come from the same
+    /// turn on the device, so another thread's picture can't put its counts in their place.
+    pub fn rgba_with_stats(&self, scene: &Scene, cam: &Camera, width: u32, height: u32) -> Result<(Vec<u8>, DrawStats)> {
+        self.draw(scene, None, cam, width, height)
+    }
+
+    /// The picture and what it drew, both read while this call has the device to itself.
+    fn draw(&self, scene: &Scene, highlight: Option<GpuScene>, cam: &Camera, width: u32, height: u32) -> Result<(Vec<u8>, DrawStats)> {
         if !(1..=self.max_side).contains(&width) || !(1..=self.max_side).contains(&height) {
             return Err(GpuError::Render(format!("a picture is 1 to {} pixels a side, not {width} × {height}", self.max_side)));
         }
@@ -301,13 +312,8 @@ impl Capturer {
         if rgba.len() != (row as usize) * (height as usize) {
             return Err(GpuError::Render("the picture read back short".into()));
         }
-        Ok(rgba)
-    }
-
-    /// What the last picture drew ([`crate::view::DrawStats`]).
-    pub fn last_stats(&self) -> crate::view::DrawStats {
-        let Ok(state) = self.state.lock() else { return Default::default() };
-        state.renderer.stats().lock().map(|s| *s).unwrap_or_default()
+        let stats = state.renderer.stats().lock().map(|s| *s).unwrap_or_default();
+        Ok((rgba, stats))
     }
 
     /// [`Capturer::rgba`] as PNG bytes.

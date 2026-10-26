@@ -105,8 +105,8 @@ fn the_renderer_counts_what_it_draws() {
         let cam = view::home_camera(s);
         let scene = view::scene_with_guides(s, &cam, None, Guides { grid: false, axes: false });
         let triangles: usize = scene.meshes.iter().map(|m| m.mesh.triangles.len()).sum();
-        c.rgba(&scene, &cam, 160, 100).unwrap();
-        (c.last_stats(), triangles as u64)
+        let (_, stats) = c.rgba_with_stats(&scene, &cam, 160, 100).unwrap();
+        (stats, triangles as u64)
     };
     let (empty, _) = drawn(&Session::default());
     assert_eq!((empty.triangles, empty.line_segments), (0, 0), "{empty:?}");
@@ -119,6 +119,32 @@ fn the_renderer_counts_what_it_draws() {
     ]));
     assert!(two_mesh > one_mesh && two.triangles >= two_mesh && two.triangles > one.triangles, "{two:?} for {two_mesh}");
     assert!(two.line_segments > one.line_segments, "{two:?}");
+}
+
+/// Each picture's counts are its own while other threads draw on the same capturer: an empty
+/// design never reports another thread's box, and a box never reports an empty design's
+/// nothing. The counts were once read in a second call after the picture, and another thread's
+/// picture could land in between.
+#[test]
+fn pictures_drawn_at_once_each_count_their_own() {
+    let Some(c) = capturer() else { return };
+    let scene = |s: &Session| {
+        let cam = view::home_camera(s);
+        (view::scene_with_guides(s, &cam, None, Guides { grid: false, axes: false }), cam)
+    };
+    let empty = scene(&Session::default());
+    let solid = scene(&session(&[("solid.box", json!({"length": 40, "width": 30, "height": 20}))]));
+    std::thread::scope(|t| {
+        for k in 0..8 {
+            let (name, (sc, cam), drawn) = if k % 2 == 0 { ("empty", &empty, false) } else { ("box", &solid, true) };
+            t.spawn(move || {
+                for i in 0..50 {
+                    let (_, stats) = c.rgba_with_stats(sc, cam, 64, 48).unwrap();
+                    assert_eq!(stats.triangles > 0, drawn, "{name}, picture {i}: {stats:?}");
+                }
+            });
+        }
+    });
 }
 
 /// The ground grid and the origin's axes each change the picture.
