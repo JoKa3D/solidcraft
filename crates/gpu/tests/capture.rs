@@ -344,5 +344,44 @@ fn bad_picture_sizes_are_errors() {
         assert!(c.rgba(&sc, &Camera::default(), w, h).is_err(), "{w} x {h}");
     }
     // And the device still draws.
-    assert!(c.rgba(&sc, &Camera::default(), 8, 8).is_ok());
+    let drawn = c.rgba(&sc, &Camera::default(), 8, 8);
+    assert!(drawn.is_ok(), "{:?}", drawn.err());
+}
+
+/// Pictures read back while another thread uses their device: the app's window submits its
+/// frames on the device its thumbnails and `ui.render` pictures are drawn on, and on the shared
+/// capturer every picture checks its device while another one reads back. Any submit or poll can
+/// take a picture's finished read-back and answer it on its own thread a moment after the
+/// picture's wait is over; the picture used to give up then ("reading a picture back without
+/// waiting for the browser", now and then in this binary's other tests).
+#[test]
+fn pictures_read_back_while_another_thread_uses_the_device() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let policy = solidcraft_gpu::select::Policy::from_env().unwrap();
+    let Some((adapter, _)) = solidcraft_gpu::select::pick(policy) else {
+        assert!(std::env::var_os("SOLIDCRAFT_REQUIRE_GPU").is_none(), "no GPU adapter under the {} policy", policy.name());
+        eprintln!("skipping: no GPU adapter under the {} policy", policy.name());
+        return;
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        required_features: solidcraft_gpu::depth_features(&adapter),
+        required_limits: wgpu::Limits::downlevel_defaults().using_resolution(adapter.limits()),
+        ..Default::default()
+    }))
+    .unwrap();
+    let c = Capturer::new(&adapter, device.clone(), queue).unwrap();
+    let sc = solidcraft_engine::render::Scene::default();
+    const PICTURES: usize = 2000;
+    let done = AtomicBool::new(false);
+    let failed: Vec<String> = std::thread::scope(|t| {
+        t.spawn(|| {
+            while !done.load(Ordering::Relaxed) {
+                let _ = device.poll(wgpu::PollType::Poll);
+            }
+        });
+        let failed = (0..PICTURES).filter_map(|i| c.rgba(&sc, &Camera::default(), 8, 8).err().map(|e| format!("picture {i}: {e}"))).collect();
+        done.store(true, Ordering::Relaxed);
+        failed
+    });
+    assert!(failed.is_empty(), "{} of {PICTURES} pictures failed, the first: {:?}", failed.len(), failed.first());
 }

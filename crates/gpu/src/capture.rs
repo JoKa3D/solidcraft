@@ -299,11 +299,7 @@ impl Capturer {
         device
             .poll(wgpu::PollType::Wait { submission_index: Some(submission), timeout: Some(TIMEOUT) })
             .map_err(|e| GpuError::Render(format!("waiting for the picture: {e}")))?;
-        match rx.try_recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => return Err(GpuError::Render(format!("reading the picture back: {e}"))),
-            Err(_) => return Err(GpuError::Unsupported("reading a picture back without waiting for the browser".into())),
-        }
+        read_back(&rx)?;
         let data = slice.get_mapped_range().map_err(|e| GpuError::Render(format!("reading the picture back: {e}")))?;
         let mut rgba = Vec::with_capacity((row as usize) * (height as usize));
         for r in data.chunks(padded as usize).take(height as usize) {
@@ -468,6 +464,19 @@ fn watch_lost(device: &wgpu::Device) -> Arc<AtomicBool> {
         seen.store(true, Ordering::Release);
     });
     lost
+}
+
+/// The answer to a picture's read-back, once the wait for its submission is over. The read-back
+/// is ready by then, but its answer may still be on its way: any other submit or poll on the
+/// device (the window's frames, another picture's device check) can pick it up and answer it on
+/// its own thread once it lets go of the device. So a native picture waits for the answer; a
+/// browser answers later, on its own, and a picture can't wait for it there.
+fn read_back(answer: &std::sync::mpsc::Receiver<std::result::Result<(), wgpu::BufferAsyncError>>) -> Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let answer = answer.recv_timeout(TIMEOUT).map_err(|e| GpuError::Render(format!("reading the picture back: {e}")))?;
+    #[cfg(target_arch = "wasm32")]
+    let answer = answer.try_recv().map_err(|_| GpuError::Unsupported("reading a picture back without waiting for the browser".into()))?;
+    answer.map_err(|e| GpuError::Render(format!("reading the picture back: {e}")))
 }
 
 /// The background gradient: the viewport's top colour at the top, its bottom one at the bottom,
